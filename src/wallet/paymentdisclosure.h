@@ -1,6 +1,6 @@
 // Copyright (c) 2017 The Zcash developers
 // Distributed under the MIT software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// file COPYING or https://www.opensource.org/licenses/mit-license.php .
 
 #ifndef ZCASH_PAYMENTDISCLOSURE_H
 #define ZCASH_PAYMENTDISCLOSURE_H
@@ -17,6 +17,8 @@
 #include <array>
 #include <cstdint>
 #include <string>
+
+#include <rust/ed25519/types.h>
 
 
 // Ensure that the two different protocol messages, payment disclosure blobs and transactions,
@@ -36,7 +38,7 @@ typedef JSOutPoint PaymentDisclosureKey;
 struct PaymentDisclosureInfo {
     uint8_t version;          // 0 = experimental, 1 = first production version, etc.
     uint256 esk;              // zcash/NoteEncryption.cpp
-    uint256 joinSplitPrivKey; // primitives/transaction.h
+    Ed25519SigningKey joinSplitPrivKey; // primitives/transaction.h
     // ed25519 - not tied to implementation e.g. libsodium, see ed25519 rfc
 
     libzcash::SproutPaymentAddress zaddr;
@@ -44,7 +46,7 @@ struct PaymentDisclosureInfo {
     PaymentDisclosureInfo() : version(PAYMENT_DISCLOSURE_VERSION_EXPERIMENTAL) {
     }
 
-    PaymentDisclosureInfo(uint8_t v, uint256 esk, uint256 key, libzcash::SproutPaymentAddress zaddr) : version(v), esk(esk), joinSplitPrivKey(key), zaddr(zaddr) { }
+    PaymentDisclosureInfo(uint8_t v, uint256 esk, Ed25519SigningKey key, libzcash::SproutPaymentAddress zaddr) : version(v), esk(esk), joinSplitPrivKey(key), zaddr(zaddr) { }
 
     ADD_SERIALIZE_METHODS;
 
@@ -59,7 +61,14 @@ struct PaymentDisclosureInfo {
     std::string ToString() const;
 
     friend bool operator==(const PaymentDisclosureInfo& a, const PaymentDisclosureInfo& b) {
-        return (a.version == b.version && a.esk == b.esk && a.joinSplitPrivKey == b.joinSplitPrivKey && a.zaddr == b.zaddr);
+        return (
+            a.version == b.version &&
+            a.esk == b.esk &&
+            std::equal(
+                a.joinSplitPrivKey.bytes,
+                a.joinSplitPrivKey.bytes + ED25519_SIGNING_KEY_LEN,
+                b.joinSplitPrivKey.bytes) &&
+            a.zaddr == b.zaddr);
     }
 
     friend bool operator!=(const PaymentDisclosureInfo& a, const PaymentDisclosureInfo& b) {
@@ -74,7 +83,7 @@ struct PaymentDisclosurePayload {
     uint8_t version;        // 0 = experimental, 1 = first production version, etc.
     uint256 esk;            // zcash/NoteEncryption.cpp
     uint256 txid;           // primitives/transaction.h
-    uint64_t js;            // Index into CTransaction.vjoinsplit
+    uint64_t js;            // Index into CTransaction.vJoinSplit
     uint8_t n;              // Index into JSDescription fields of length ZC_NUM_JS_OUTPUTS
     libzcash::SproutPaymentAddress zaddr; // zcash/Address.hpp
     std::string message;     // parameter to RPC call
@@ -114,12 +123,16 @@ struct PaymentDisclosurePayload {
 
 struct PaymentDisclosure {
     PaymentDisclosurePayload payload;
-    std::array<unsigned char, 64> payloadSig;
+    Ed25519Signature payloadSig;
     // We use boost array because serialize doesn't like char buffer, otherwise we could do: unsigned char payloadSig[64];
 
     PaymentDisclosure() {};
-    PaymentDisclosure(const PaymentDisclosurePayload payload, const std::array<unsigned char, 64> sig) : payload(payload), payloadSig(sig) {};
-    PaymentDisclosure(const uint256& joinSplitPubKey, const PaymentDisclosureKey& key, const PaymentDisclosureInfo& info, const std::string& message);
+    PaymentDisclosure(const PaymentDisclosurePayload payload, const Ed25519Signature sig) : payload(payload), payloadSig(sig) {};
+    PaymentDisclosure(
+        const Ed25519VerificationKey& joinSplitPubKey,
+        const PaymentDisclosureKey& key,
+        const PaymentDisclosureInfo& info,
+        const std::string& message);
 
     ADD_SERIALIZE_METHODS;
 
@@ -132,7 +145,13 @@ struct PaymentDisclosure {
     std::string ToString() const;
 
     friend bool operator==(const PaymentDisclosure& a, const PaymentDisclosure& b) {
-        return (a.payload == b.payload && a.payloadSig == b.payloadSig);
+        return (
+            a.payload == b.payload &&
+            std::equal(
+                a.payloadSig.bytes,
+                a.payloadSig.bytes + ED25519_SIGNATURE_LEN,
+                b.payloadSig.bytes)
+        );
     }
 
     friend bool operator!=(const PaymentDisclosure& a, const PaymentDisclosure& b) {

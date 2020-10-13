@@ -1,7 +1,7 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2013 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// file COPYING or https://www.opensource.org/licenses/mit-license.php .
 
 #ifndef BITCOIN_WALLET_WALLETDB_H
 #define BITCOIN_WALLET_WALLETDB_H
@@ -11,13 +11,14 @@
 #include "key.h"
 #include "keystore.h"
 #include "zcash/Address.hpp"
-#include "zcash/zip32.h"
 
 #include <list>
 #include <stdint.h>
 #include <string>
 #include <utility>
 #include <vector>
+
+static const bool DEFAULT_FLUSHWALLET = true;
 
 class CAccount;
 class CAccountingEntry;
@@ -117,7 +118,7 @@ public:
     }
 };
 
-/** Access to the wallet database (wallet.dat) */
+/** Access to the wallet database */
 class CWalletDB : public CDB
 {
 public:
@@ -172,7 +173,7 @@ public:
 
     DBErrors ReorderTransactions(CWallet* pwallet);
     DBErrors LoadWallet(CWallet* pwallet);
-    DBErrors FindWalletTx(CWallet* pwallet, std::vector<uint256>& vTxHash, std::vector<CWalletTx>& vWtx);
+    DBErrors FindWalletTxToZap(CWallet* pwallet, std::vector<uint256>& vTxHash, std::vector<CWalletTx>& vWtx);
     DBErrors ZapWalletTx(CWallet* pwallet, std::vector<CWalletTx>& vWtx);
     static bool Recover(CDBEnv& dbenv, const std::string& filename, bool fOnlyKeys);
     static bool Recover(CDBEnv& dbenv, const std::string& filename);
@@ -199,6 +200,8 @@ public:
 
     bool WriteSproutViewingKey(const libzcash::SproutViewingKey &vk);
     bool EraseSproutViewingKey(const libzcash::SproutViewingKey &vk);
+    bool WriteSaplingExtendedFullViewingKey(const libzcash::SaplingExtendedFullViewingKey &extfvk);
+    bool EraseSaplingExtendedFullViewingKey(const libzcash::SaplingExtendedFullViewingKey &extfvk);
 
 private:
     CWalletDB(const CWalletDB&);

@@ -1,7 +1,7 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2014 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// file COPYING or https://www.opensource.org/licenses/mit-license.php .
 
 #include "txmempool.h"
 
@@ -14,6 +14,7 @@
 #include "timedata.h"
 #include "util.h"
 #include "utilmoneystr.h"
+#include "validationinterface.h"
 #include "version.h"
 
 using namespace std;
@@ -67,6 +68,8 @@ CTxMemPool::CTxMemPool(const CFeeRate& _minRelayFee) :
 CTxMemPool::~CTxMemPool()
 {
     delete minerPolicyEstimator;
+    delete recentlyEvicted;
+    delete weightedTxTree;
 }
 
 void CTxMemPool::pruneSpent(const uint256 &hashTx, CCoins &coins)
@@ -101,11 +104,14 @@ bool CTxMemPool::addUnchecked(const uint256& hash, const CTxMemPoolEntry &entry,
     // Used by main.cpp AcceptToMemoryPool(), which DOES do
     // all the appropriate checks.
     LOCK(cs);
+    weightedTxTree->add(WeightedTxInfo::from(entry.GetTx(), entry.GetFee()));
     mapTx.insert(entry);
     const CTransaction& tx = mapTx.find(hash)->GetTx();
+    mapRecentlyAddedTx[tx.GetHash()] = &tx;
+    nRecentlyAddedSequence += 1;
     for (unsigned int i = 0; i < tx.vin.size(); i++)
         mapNextTx[tx.vin[i].prevout] = CInPoint(&tx, i);
-    BOOST_FOREACH(const JSDescription &joinsplit, tx.vjoinsplit) {
+    BOOST_FOREACH(const JSDescription &joinsplit, tx.vJoinSplit) {
         BOOST_FOREACH(const uint256 &nf, joinsplit.nullifiers) {
             mapSproutNullifiers[nf] = &tx;
         }
@@ -121,6 +127,112 @@ bool CTxMemPool::addUnchecked(const uint256& hash, const CTxMemPoolEntry &entry,
     return true;
 }
 
+void CTxMemPool::addAddressIndex(const CTxMemPoolEntry &entry, const CCoinsViewCache &view)
+{
+    LOCK(cs);
+    const CTransaction& tx = entry.GetTx();
+    std::vector<CMempoolAddressDeltaKey> inserted;
+
+    uint256 txhash = tx.GetHash();
+    for (unsigned int j = 0; j < tx.vin.size(); j++) {
+        const CTxIn input = tx.vin[j];
+        const CTxOut &prevout = view.GetOutputFor(input);
+        CScript::ScriptType type = prevout.scriptPubKey.GetType();
+        if (type == CScript::UNKNOWN)
+            continue;
+        CMempoolAddressDeltaKey key(type, prevout.scriptPubKey.AddressHash(), txhash, j, 1);
+        CMempoolAddressDelta delta(entry.GetTime(), prevout.nValue * -1, input.prevout.hash, input.prevout.n);
+        mapAddress.insert(make_pair(key, delta));
+        inserted.push_back(key);
+    }
+
+    for (unsigned int j = 0; j < tx.vout.size(); j++) {
+        const CTxOut &out = tx.vout[j];
+        CScript::ScriptType type = out.scriptPubKey.GetType();
+        if (type == CScript::UNKNOWN)
+            continue;
+        CMempoolAddressDeltaKey key(type, out.scriptPubKey.AddressHash(), txhash, j, 0);
+        mapAddress.insert(make_pair(key, CMempoolAddressDelta(entry.GetTime(), out.nValue)));
+        inserted.push_back(key);
+    }
+
+    mapAddressInserted.insert(make_pair(txhash, inserted));
+}
+
+// START insightexplorer
+void CTxMemPool::getAddressIndex(
+    const std::vector<std::pair<uint160, int>>& addresses,
+    std::vector<std::pair<CMempoolAddressDeltaKey, CMempoolAddressDelta>>& results)
+{
+    LOCK(cs);
+    for (const auto& it : addresses) {
+        auto ait = mapAddress.lower_bound(CMempoolAddressDeltaKey(it.second, it.first));
+        while (ait != mapAddress.end() && (*ait).first.addressBytes == it.first && (*ait).first.type == it.second) {
+            results.push_back(*ait);
+            ait++;
+        }
+    }
+}
+
+void CTxMemPool::removeAddressIndex(const uint256& txhash)
+{
+    LOCK(cs);
+    auto it = mapAddressInserted.find(txhash);
+
+    if (it != mapAddressInserted.end()) {
+        std::vector<CMempoolAddressDeltaKey> keys = it->second;
+        for (const auto& mit : keys) {
+            mapAddress.erase(mit);
+        }
+        mapAddressInserted.erase(it);
+    }
+}
+
+void CTxMemPool::addSpentIndex(const CTxMemPoolEntry &entry, const CCoinsViewCache &view)
+{
+    LOCK(cs);
+    const CTransaction& tx = entry.GetTx();
+    uint256 txhash = tx.GetHash();
+    std::vector<CSpentIndexKey> inserted;
+
+    for (unsigned int j = 0; j < tx.vin.size(); j++) {
+        const CTxIn input = tx.vin[j];
+        const CTxOut &prevout = view.GetOutputFor(input);
+        CSpentIndexKey key = CSpentIndexKey(input.prevout.hash, input.prevout.n);
+        CSpentIndexValue value = CSpentIndexValue(txhash, j, -1, prevout.nValue,
+            prevout.scriptPubKey.GetType(),
+            prevout.scriptPubKey.AddressHash());
+        mapSpent.insert(make_pair(key, value));
+        inserted.push_back(key);
+    }
+    mapSpentInserted.insert(make_pair(txhash, inserted));
+}
+
+bool CTxMemPool::getSpentIndex(const CSpentIndexKey &key, CSpentIndexValue &value)
+{
+    LOCK(cs);
+    std::map<CSpentIndexKey, CSpentIndexValue, CSpentIndexKeyCompare>::iterator it = mapSpent.find(key);
+    if (it != mapSpent.end()) {
+        value = it->second;
+        return true;
+    }
+    return false;
+}
+
+void CTxMemPool::removeSpentIndex(const uint256 txhash)
+{
+    LOCK(cs);
+    auto it = mapSpentInserted.find(txhash);
+
+    if (it != mapSpentInserted.end()) {
+        std::vector<CSpentIndexKey> keys = (*it).second;
+        for (std::vector<CSpentIndexKey>::iterator mit = keys.begin(); mit != keys.end(); mit++) {
+            mapSpent.erase(*mit);
+        }
+        mapSpentInserted.erase(it);
+    }
+}
+// END insightexplorer
 
 void CTxMemPool::remove(const CTransaction &origTx, std::list<CTransaction>& removed, bool fRecursive)
 {
@@ -156,9 +268,10 @@ void CTxMemPool::remove(const CTransaction &origTx, std::list<CTransaction>& rem
                     txToRemove.push_back(it->second.ptx->GetHash());
                 }
             }
+            mapRecentlyAddedTx.erase(hash);
             BOOST_FOREACH(const CTxIn& txin, tx.vin)
                 mapNextTx.erase(txin.prevout);
-            BOOST_FOREACH(const JSDescription& joinsplit, tx.vjoinsplit) {
+            BOOST_FOREACH(const JSDescription& joinsplit, tx.vJoinSplit) {
                 BOOST_FOREACH(const uint256& nf, joinsplit.nullifiers) {
                     mapSproutNullifiers.erase(nf);
                 }
@@ -172,6 +285,15 @@ void CTxMemPool::remove(const CTransaction &origTx, std::list<CTransaction>& rem
             mapTx.erase(hash);
             nTransactionsUpdated++;
             minerPolicyEstimator->removeTx(hash);
+
+            // insightexplorer
+            if (fAddressIndex)
+                removeAddressIndex(hash);
+            if (fSpentIndex)
+                removeSpentIndex(hash);
+        }
+        for (CTransaction tx : removed) {
+            weightedTxTree->remove(tx.GetHash());
         }
     }
 }
@@ -219,7 +341,7 @@ void CTxMemPool::removeWithAnchor(const uint256 &invalidRoot, ShieldedType type)
         const CTransaction& tx = it->GetTx();
         switch (type) {
             case SPROUT:
-                BOOST_FOREACH(const JSDescription& joinsplit, tx.vjoinsplit) {
+                BOOST_FOREACH(const JSDescription& joinsplit, tx.vJoinSplit) {
                     if (joinsplit.anchor == invalidRoot) {
                         transactionsToRemove.push_back(tx);
                         break;
@@ -262,7 +384,7 @@ void CTxMemPool::removeConflicts(const CTransaction &tx, std::list<CTransaction>
         }
     }
 
-    BOOST_FOREACH(const JSDescription &joinsplit, tx.vjoinsplit) {
+    BOOST_FOREACH(const JSDescription &joinsplit, tx.vJoinSplit) {
         BOOST_FOREACH(const uint256 &nf, joinsplit.nullifiers) {
             std::map<uint256, const CTransaction*>::iterator it = mapSproutNullifiers.find(nf);
             if (it != mapSproutNullifiers.end()) {
@@ -284,7 +406,7 @@ void CTxMemPool::removeConflicts(const CTransaction &tx, std::list<CTransaction>
     }
 }
 
-void CTxMemPool::removeExpired(unsigned int nBlockHeight)
+std::vector<uint256> CTxMemPool::removeExpired(unsigned int nBlockHeight)
 {
     // Remove expired txs from the mempool
     LOCK(cs);
@@ -296,11 +418,14 @@ void CTxMemPool::removeExpired(unsigned int nBlockHeight)
             transactionsToRemove.push_back(tx);
         }
     }
+    std::vector<uint256> ids;
     for (const CTransaction& tx : transactionsToRemove) {
         list<CTransaction> removed;
         remove(tx, removed, true);
+        ids.push_back(tx.GetHash());
         LogPrint("mempool", "Removing expired txid: %s\n", tx.GetHash().ToString());
     }
+    return ids;
 }
 
 /**
@@ -367,7 +492,7 @@ void CTxMemPool::check(const CCoinsViewCache *pcoins) const
     if (nCheckFrequency == 0)
         return;
 
-    if (insecure_rand() >= nCheckFrequency)
+    if (GetRand(std::numeric_limits<uint32_t>::max()) >= nCheckFrequency)
         return;
 
     LogPrint("mempool", "Checking mempool with %u transactions and %u inputs\n", (unsigned int)mapTx.size(), (unsigned int)mapNextTx.size());
@@ -407,7 +532,7 @@ void CTxMemPool::check(const CCoinsViewCache *pcoins) const
 
         boost::unordered_map<uint256, SproutMerkleTree, CCoinsKeyHasher> intermediates;
 
-        BOOST_FOREACH(const JSDescription &joinsplit, tx.vjoinsplit) {
+        BOOST_FOREACH(const JSDescription &joinsplit, tx.vJoinSplit) {
             BOOST_FOREACH(const uint256 &nf, joinsplit.nullifiers) {
                 assert(!pcoins->GetNullifier(nf, SPROUT));
             }
@@ -612,6 +737,34 @@ bool CTxMemPool::nullifierExists(const uint256& nullifier, ShieldedType type) co
     }
 }
 
+std::pair<std::vector<CTransaction>, uint64_t> CTxMemPool::DrainRecentlyAdded()
+{
+    uint64_t recentlyAddedSequence;
+    std::vector<CTransaction> txs;
+    {
+        LOCK(cs);
+        recentlyAddedSequence = nRecentlyAddedSequence;
+        for (const auto& kv : mapRecentlyAddedTx) {
+            txs.push_back(*(kv.second));
+        }
+        mapRecentlyAddedTx.clear();
+    }
+
+    return std::make_pair(txs, recentlyAddedSequence);
+}
+
+void CTxMemPool::SetNotifiedSequence(uint64_t recentlyAddedSequence) {
+    assert(Params().NetworkIDString() == "regtest");
+    LOCK(cs);
+    nNotifiedSequence = recentlyAddedSequence;
+}
+
+bool CTxMemPool::IsFullyNotified() {
+    assert(Params().NetworkIDString() == "regtest");
+    LOCK(cs);
+    return nRecentlyAddedSequence == nNotifiedSequence;
+}
+
 CCoinsViewMemPool::CCoinsViewMemPool(CCoinsView *baseIn, CTxMemPool &mempoolIn) : CCoinsViewBacked(baseIn), mempool(mempoolIn) { }
 
 bool CCoinsViewMemPool::GetNullifier(const uint256 &nf, ShieldedType type) const
@@ -637,6 +790,60 @@ bool CCoinsViewMemPool::HaveCoins(const uint256 &txid) const {
 
 size_t CTxMemPool::DynamicMemoryUsage() const {
     LOCK(cs);
-    // Estimate the overhead of mapTx to be 6 pointers + an allocation, as no exact formula for boost::multi_index_contained is implemented.
-    return memusage::MallocUsage(sizeof(CTxMemPoolEntry) + 6 * sizeof(void*)) * mapTx.size() + memusage::DynamicUsage(mapNextTx) + memusage::DynamicUsage(mapDeltas) + cachedInnerUsage;
+
+    size_t total = 0;
+
+    // Estimate the overhead of mapTx to be 6 pointers + an allocation, as no exact formula for
+    // boost::multi_index_contained is implemented.
+    total += memusage::MallocUsage(sizeof(CTxMemPoolEntry) + 6 * sizeof(void*)) * mapTx.size();
+
+    // Two metadata maps inherited from Bitcoin Core
+    total += memusage::DynamicUsage(mapNextTx) + memusage::DynamicUsage(mapDeltas);
+
+    // Saves iterating over the full map
+    total += cachedInnerUsage;
+
+    // Wallet notification
+    total += memusage::DynamicUsage(mapRecentlyAddedTx);
+
+    // Nullifier set tracking
+    total += memusage::DynamicUsage(mapSproutNullifiers) + memusage::DynamicUsage(mapSaplingNullifiers);
+
+    // DoS mitigation
+    total += memusage::DynamicUsage(recentlyEvicted) + memusage::DynamicUsage(weightedTxTree);
+
+    // Insight-related structures
+    size_t insight = 0;
+    insight += memusage::DynamicUsage(mapAddress);
+    insight += memusage::DynamicUsage(mapAddressInserted);
+    insight += memusage::DynamicUsage(mapSpent);
+    insight += memusage::DynamicUsage(mapSpentInserted);
+    total += insight;
+
+    return total;
+}
+
+void CTxMemPool::SetMempoolCostLimit(int64_t totalCostLimit, int64_t evictionMemorySeconds) {
+    LOCK(cs);
+    LogPrint("mempool", "Setting mempool cost limit: (limit=%d, time=%d)\n", totalCostLimit, evictionMemorySeconds);
+    delete recentlyEvicted;
+    delete weightedTxTree;
+    recentlyEvicted = new RecentlyEvictedList(evictionMemorySeconds);
+    weightedTxTree = new WeightedTxTree(totalCostLimit);
+}
+
+bool CTxMemPool::IsRecentlyEvicted(const uint256& txId) {
+    LOCK(cs);
+    return recentlyEvicted->contains(txId);
+}
+
+void CTxMemPool::EnsureSizeLimit() {
+    AssertLockHeld(cs);
+    boost::optional<uint256> maybeDropTxId;
+    while ((maybeDropTxId = weightedTxTree->maybeDropRandom()).is_initialized()) {
+        uint256 txId = maybeDropTxId.get();
+        recentlyEvicted->add(txId);
+        std::list<CTransaction> removed;
+        remove(mapTx.find(txId)->GetTx(), removed, true);
+    }
 }

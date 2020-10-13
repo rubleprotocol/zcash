@@ -1,6 +1,6 @@
 // Copyright (c) 2009-2014 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// file COPYING or https://www.opensource.org/licenses/mit-license.php .
 
 #include "core_io.h"
 
@@ -142,9 +142,10 @@ void ScriptPubKeyToUniv(const CScript& scriptPubKey,
     out.pushKV("reqSigs", nRequired);
     out.pushKV("type", GetTxnOutputType(type));
 
+    KeyIO keyIO(Params());
     UniValue a(UniValue::VARR);
     for (const CTxDestination& addr : addresses) {
-        a.push_back(EncodeDestination(addr));
+        a.push_back(keyIO.EncodeDestination(addr));
     }
     out.pushKV("addresses", a);
 }

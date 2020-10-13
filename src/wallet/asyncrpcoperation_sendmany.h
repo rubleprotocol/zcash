@@ -1,6 +1,6 @@
 // Copyright (c) 2016 The Zcash developers
 // Distributed under the MIT software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// file COPYING or https://www.opensource.org/licenses/mit-license.php .
 
 #ifndef ASYNCRPCOPERATION_SENDMANY_H
 #define ASYNCRPCOPERATION_SENDMANY_H
@@ -20,19 +20,44 @@
 
 #include <univalue.h>
 
+#include <rust/ed25519/types.h>
+
 // Default transaction fee if caller does not specify one.
 #define ASYNC_RPC_OPERATION_DEFAULT_MINERS_FEE   10000
 
 using namespace libzcash;
 
-// A recipient is a tuple of address, amount, memo (optional if zaddr)
-typedef std::tuple<std::string, CAmount, std::string> SendManyRecipient;
+class SendManyRecipient {
+public:
+    std::string address;
+    CAmount amount;
+    std::string memo;
 
-// Input UTXO is a tuple (quadruple) of txid, vout, amount, coinbase)
-typedef std::tuple<uint256, int, CAmount, bool> SendManyInputUTXO;
+    SendManyRecipient(std::string address_, CAmount amount_, std::string memo_) :
+        address(address_), amount(amount_), memo(memo_) {}
+};
 
-// Input JSOP is a tuple of JSOutpoint, note and amount
-typedef std::tuple<JSOutPoint, SproutNote, CAmount> SendManyInputJSOP;
+class SendManyInputUTXO {
+public:
+    uint256 txid;
+    int vout;
+    CScript scriptPubKey;
+    CAmount amount;
+    bool coinbase;
+
+    SendManyInputUTXO(uint256 txid_, int vout_, CScript scriptPubKey_, CAmount amount_, bool coinbase_) :
+        txid(txid_), vout(vout_), scriptPubKey(scriptPubKey_), amount(amount_), coinbase(coinbase_) {}
+};
+
+class SendManyInputJSOP {
+public:
+    JSOutPoint point;
+    SproutNote note;
+    CAmount amount;
+
+    SendManyInputJSOP(JSOutPoint point_, SproutNote note_, CAmount amount_) :
+        point(point_), note(note_), amount(amount_) {}
+};
 
 // Package of info which is passed to perform_joinsplit methods.
 struct AsyncJoinSplitInfo
@@ -87,14 +112,15 @@ private:
     CAmount fee_;
     int mindepth_;
     std::string fromaddress_;
+    bool useanyutxo_;
     bool isfromtaddr_;
     bool isfromzaddr_;
     CTxDestination fromtaddr_;
     PaymentAddress frompaymentaddress_;
     SpendingKey spendingkey_;
-    
-    uint256 joinSplitPubKey_;
-    unsigned char joinSplitPrivKey_[crypto_sign_SECRETKEYBYTES];
+
+    Ed25519VerificationKey joinSplitPubKey_;
+    Ed25519SigningKey joinSplitPrivKey_;
 
     // The key is the result string from calling JSOutPoint::ToString()
     std::unordered_map<std::string, WitnessAnchorData> jsopWitnessAnchorMap;
@@ -107,8 +133,8 @@ private:
 
     TransactionBuilder builder_;
     CTransaction tx_;
-   
-    void add_taddr_change_output_to_tx(CAmount amount);
+
+    void add_taddr_change_output_to_tx(CReserveKey& keyChange, CAmount amount);
     void add_taddr_outputs_to_tx();
     bool find_unspent_notes();
     bool find_utxos(bool fAcceptCoinbase);
@@ -126,8 +152,6 @@ private:
         AsyncJoinSplitInfo & info,
         std::vector<boost::optional < SproutWitness>> witnesses,
         uint256 anchor);
-
-    void sign_send_raw_transaction(UniValue obj);     // throws exception if there was an error
 
     // payment disclosure!
     std::vector<PaymentDisclosureKeyInfo> paymentDisclosureData_;
@@ -150,9 +174,9 @@ public:
     }
     
     // Delegated methods
-    
-    void add_taddr_change_output_to_tx(CAmount amount) {
-        delegate->add_taddr_change_output_to_tx(amount);
+
+    void add_taddr_change_output_to_tx(CReserveKey& keyChange, CAmount amount) {
+        delegate->add_taddr_change_output_to_tx(keyChange, amount);
     }
     
     void add_taddr_outputs_to_tx() {
@@ -191,10 +215,6 @@ public:
         return delegate->perform_joinsplit(info, witnesses, anchor);
     }
 
-    void sign_send_raw_transaction(UniValue obj) {
-        delegate->sign_send_raw_transaction(obj);
-    }
-    
     void set_state(OperationStatus state) {
         delegate->state_.store(state);
     }
@@ -202,4 +222,3 @@ public:
 
 
 #endif /* ASYNCRPCOPERATION_SENDMANY_H */
-
