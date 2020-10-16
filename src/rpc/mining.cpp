@@ -339,7 +339,9 @@ UniValue getmininginfo(const UniValue& params, bool fHelp)
     obj.pushKV("currentblocksize", (uint64_t)nLastBlockSize);
     obj.pushKV("currentblocktx",   (uint64_t)nLastBlockTx);
     obj.pushKV("difficulty",       (double)GetNetworkDifficulty());
-    obj.pushKV("errors",           GetWarnings("statusbar"));
+    auto warnings = GetWarnings("statusbar");
+    obj.pushKV("errors",           warnings.first);
+    obj.pushKV("errorstimestamp",  warnings.second);
     obj.pushKV("genproclimit",     (int)GetArg("-genproclimit", DEFAULT_GENERATE_THREADS));
     obj.pushKV("localsolps"  ,     getlocalsolps(params, false));
     obj.pushKV("networksolps",     getnetworksolps(params, false));
@@ -527,7 +529,7 @@ UniValue getblocktemplate(const UniValue& params, bool fHelp)
                 return "inconclusive-not-best-prevblk";
 
             CValidationState state;
-            TestBlockValidity(state, Params(), block, pindexPrev, false, true);
+            TestBlockValidity(state, Params(), block, pindexPrev, true);
             return BIP22ValidationResult(state);
         }
     }
@@ -896,7 +898,7 @@ UniValue getblocksubsidy(const UniValue& params, bool fHelp)
     if (nHeight < 0)
         throw JSONRPCError(RPC_INVALID_PARAMETER, "Block height out of range");
 
-    auto consensus = Params().GetConsensus();
+    const Consensus::Params& consensus = Params().GetConsensus();
     CAmount nBlockSubsidy = GetBlockSubsidy(nHeight, consensus);
     CAmount nMinerReward = nBlockSubsidy;
     CAmount nFoundersReward = 0;
