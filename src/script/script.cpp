@@ -1,7 +1,7 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2014 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// file COPYING or https://www.opensource.org/licenses/mit-license.php .
 
 #include "script.h"
 
@@ -143,11 +143,6 @@ const char* GetOpName(opcodetype opcode)
 
     case OP_INVALIDOPCODE          : return "OP_INVALIDOPCODE";
 
-    // Note:
-    //  The template matching params OP_SMALLDATA/etc are defined in opcodetype enum
-    //  as kind of implementation hack, they are *NOT* real opcodes.  If found in real
-    //  Script, just let the default: case deal with them.
-
     default:
         return "OP_UNKNOWN";
     }
@@ -223,9 +218,8 @@ bool CScript::IsPayToScriptHash() const
             (*this)[22] == OP_EQUAL);
 }
 
-bool CScript::IsPushOnly() const
+bool CScript::IsPushOnly(const_iterator pc) const
 {
-    const_iterator pc = begin();
     while (pc < end())
     {
         opcodetype opcode;
@@ -241,15 +235,20 @@ bool CScript::IsPushOnly() const
     return true;
 }
 
+bool CScript::IsPushOnly() const
+{
+    return this->IsPushOnly(begin());
+}
+
 // insightexplorer
-int CScript::Type() const
+CScript::ScriptType CScript::GetType() const
 {
     if (this->IsPayToPublicKeyHash())
-        return 1;
+        return CScript::P2PKH;
     if (this->IsPayToScriptHash())
-        return 2;
-    // We don't know this script
-    return 0;
+        return CScript::P2SH;
+    // We don't know this script type
+    return CScript::UNKNOWN;
 }
 
 // insightexplorer
@@ -262,8 +261,9 @@ uint160 CScript::AddressHash() const
     else if (this->IsPayToScriptHash())
         start = 2;
     else {
-        // unknown script type; return an empty vector
+        // unknown script type; return zeros (this can happen)
         vector<unsigned char> hashBytes;
+        hashBytes.resize(20);
         return uint160(hashBytes);
     }
     vector<unsigned char> hashBytes(this->begin()+start, this->begin()+start+20);

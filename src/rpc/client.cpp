@@ -1,7 +1,7 @@
 // Copyright (c) 2010 Satoshi Nakamoto
 // Copyright (c) 2009-2014 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// file COPYING or https://www.opensource.org/licenses/mit-license.php .
 
 #include "rpc/client.h"
 #include "rpc/protocol.h"
@@ -17,8 +17,8 @@ using namespace std;
 class CRPCConvertParam
 {
 public:
-    std::string methodName;            //! method whose params want conversion
-    int paramIdx;                      //! 0-based idx of param to convert
+    std::string methodName; //!< method whose params want conversion
+    int paramIdx;           //!< 0-based idx of param to convert
 };
 
 static const CRPCConvertParam vRPCConvertParams[] =
@@ -37,7 +37,9 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "sendtoaddress", 4 },
     { "settxfee", 0 },
     { "getreceivedbyaddress", 1 },
+    { "getreceivedbyaddress", 2 },
     { "getreceivedbyaccount", 1 },
+    { "getreceivedbyaccount", 2 },
     { "listreceivedbyaddress", 0 },
     { "listreceivedbyaddress", 1 },
     { "listreceivedbyaddress", 2 },
@@ -46,6 +48,7 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "listreceivedbyaccount", 2 },
     { "getbalance", 1 },
     { "getbalance", 2 },
+    { "getbalance", 3 },
     { "getblockhash", 0 },
     { "move", 2 },
     { "move", 3 },
@@ -89,6 +92,8 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "lockunspent", 1 },
     { "importprivkey", 2 },
     { "importaddress", 2 },
+    { "importaddress", 3 },
+    { "importpubkey", 2 },
     { "verifychain", 0 },
     { "verifychain", 1 },
     { "keypoolrefill", 0 },
@@ -99,6 +104,16 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "prioritisetransaction", 2 },
     { "setban", 2 },
     { "setban", 3 },
+    { "getspentinfo", 0},
+    { "getaddresstxids", 0},
+    { "getaddressbalance", 0},
+    { "getaddressdeltas", 0},
+    { "getaddressutxos", 0},
+    { "getaddressmempool", 0},
+    { "getblockhashes", 0},
+    { "getblockhashes", 1},
+    { "getblockhashes", 2},
+    { "getblockdeltas", 0},
     { "zcrawjoinsplit", 1 },
     { "zcrawjoinsplit", 2 },
     { "zcrawjoinsplit", 3 },
@@ -113,6 +128,7 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "z_listunspent", 2 },
     { "z_listunspent", 3 },
     { "z_getbalance", 1},
+    { "z_getbalance", 2},
     { "z_gettotalbalance", 0},
     { "z_gettotalbalance", 1},
     { "z_gettotalbalance", 2},
@@ -130,7 +146,9 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "z_importkey", 2 },
     { "z_importviewingkey", 2 },
     { "z_getpaymentdisclosure", 1},
-    { "z_getpaymentdisclosure", 2}
+    { "z_getpaymentdisclosure", 2},
+    { "z_setmigration", 0},
+    { "z_getnotescount", 0},
 };
 
 class CRPCConvertTable

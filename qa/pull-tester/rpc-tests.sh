@@ -5,8 +5,8 @@ CURDIR=$(cd $(dirname "$0"); pwd)
 # Get BUILDDIR and REAL_BITCOIND
 . "${CURDIR}/tests-config.sh"
 
-export BITCOINCLI=${BUILDDIR}/qa/pull-tester/run-bitcoin-cli
 export BITCOIND=${REAL_BITCOIND}
+export BITCOINCLI=${REAL_BITCOINCLI}
 
 #Run the tests
 
@@ -15,9 +15,11 @@ testScripts=(
     'prioritisetransaction.py'
     'wallet_treestate.py'
     'wallet_anchorfork.py'
+    'wallet_changeaddresses.py'
     'wallet_changeindicator.py'
     'wallet_import_export.py'
-    'wallet_protectcoinbase.py'
+    'wallet_sendmany_any_taddr.py'
+    'wallet_shieldingcoinbase.py'
     'wallet_shieldcoinbase_sprout.py'
     'wallet_shieldcoinbase_sapling.py'
     'wallet_listreceived.py'
@@ -31,19 +33,22 @@ testScripts=(
     'wallet_listnotes.py'
     'mergetoaddress_sprout.py'
     'mergetoaddress_sapling.py'
+    'mergetoaddress_mixednotes.py'
     'listtransactions.py'
     'mempool_resurrect_test.py'
     'txn_doublespend.py'
     'txn_doublespend.py --mineblock'
     'getchaintips.py'
     'rawtransactions.py'
+    'getrawtransaction_insight.py'
     'rest.py'
+    'mempool_limit.py'
     'mempool_spendcoinbase.py'
     'mempool_reorg.py'
-    'mempool_tx_input_limit.py'
     'mempool_nu_activation.py'
     'mempool_tx_expiry.py'
     'httpbasics.py'
+    'multi_rpc.py'
     'zapwallettxes.py'
     'proxy_test.py'
     'merkle_blocks.py'
@@ -54,6 +59,9 @@ testScripts=(
     'key_import_export.py'
     'nodehandling.py'
     'reindex.py'
+    'addressindex.py'
+    'spentindex.py'
+    'timestampindex.py'
     'decodescript.py'
     'blockchain.py'
     'disablewallet.py'
@@ -71,6 +79,19 @@ testScripts=(
     'p2p_node_bloom.py'
     'regtest_signrawtransaction.py'
     'finalsaplingroot.py'
+    'shorter_block_times.py'
+    'sprout_sapling_migration.py'
+    'turnstile.py'
+    'mining_shielded_coinbase.py'
+    'coinbase_funding_streams.py'
+    'framework.py'
+    'sapling_rewind_check.py'
+    'feature_zip221.py'
+    'upgrade_golden.py'
+    'post_heartwood_rollback.py'
+    'feature_logging.py'
+    'remove_sprout_shielding.py'
+    'feature_walletfile.py'
 );
 testScriptsExt=(
     'getblocktemplate_longpoll.py'
@@ -88,14 +109,11 @@ testScriptsExt=(
     'invalidblockrequest.py'
 #    'forknotify.py'
     'p2p-acceptblock.py'
+    'wallet_db_flush.py'
 );
 
 if [ "x$ENABLE_ZMQ" = "x1" ]; then
   testScripts+=('zmq_test.py')
-fi
-
-if [ "x$ENABLE_PROTON" = "x1" ]; then
-  testScripts+=('proton_test.py')
 fi
 
 extArg="-extended"
@@ -111,13 +129,14 @@ function runTestScript
 
     echo -e "=== Running testscript ${testName} ==="
 
+    local startTime=$(date +%s)
     if eval "$@"
     then
         successCount=$(expr $successCount + 1)
-        echo "--- Success: ${testName} ---"
+        echo "--- Success: ${testName} ($(($(date +%s) - $startTime))s) ---"
     else
         failures[${#failures[@]}]="$testName"
-        echo "!!! FAIL: ${testName} !!!"
+        echo "!!! FAIL: ${testName} ($(($(date +%s) - $startTime))s) !!!"
     fi
 
     echo
